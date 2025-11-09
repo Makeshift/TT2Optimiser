@@ -30,20 +30,20 @@ def extract_loot(value, importance_keys):
 
 # Default importance scores
 default_importance_scores = {
-    "Currency": 100,
-    "Shards": 1,
-    "Perks": 1,
-    "Raid Cards": 1,
-    "Common Equipment": 1,
-    "Rare Equipment": 1,
-    "Event Equipment": 1,
-    "Dust": 1,
-    "Skill Points": 1,
-    "Pet Eggs": 1,
-    "Clan Eggs": 1,
-    "Wildcards": 1,
-    "Clan Scrolls": 1,
-    "Hero Weapons": 1
+    "Currency": 0,
+    "Shards": 0,
+    "Perks": 0,
+    "Raid Cards": 0,
+    "Common Equipment": 0,
+    "Rare Equipment": 0,
+    "Event Equipment": 0,
+    "Dust": 0,
+    "Skill Points": 0,
+    "Pet Eggs": 0,
+    "Clan Eggs": 0,
+    "Wildcards": 0,
+    "Clan Scrolls": 0,
+    "Hero Weapons": 0
 }
 
 # Apply the function to the dataframe
@@ -52,6 +52,16 @@ loot_df = df.applymap(lambda x: extract_loot(x, default_importance_scores.keys()
 # Extracting relevant data for optimization
 items = list(df.index)
 combinations = [(i, j) for i in items for j in items if i <= j]
+
+# Map each ingredient to the combos that yield it so we can enforce crafting goals
+ingredient_output_map = {}
+for ingredient in items:
+    combos_producing = []
+    for combo in combinations:
+        product = df.loc[combo]
+        if isinstance(product, str) and product == ingredient:
+            combos_producing.append(combo)
+    ingredient_output_map[ingredient] = combos_producing
 
 # Streamlit inputs
 st.set_page_config(layout="wide")
@@ -64,6 +74,16 @@ with st.expander("Edit CSV Data", expanded=False):
 # Create input columns for the number of ingredients and the importance
 st.header("Input the number of ingredients and importance scores:")
 
+with st.expander("Alchemy Ingredient List", expanded=False):
+    st.write(", ".join(items))
+
+ensure_all_ingredients = st.checkbox("Ensure each ingredient is brewed at least once", value=False)
+
+if ensure_all_ingredients:
+    missing_recipes = [ingredient for ingredient, combos_for_item in ingredient_output_map.items() if not combos_for_item]
+    if missing_recipes:
+        st.warning(f"No recipes found for: {', '.join(missing_recipes)}")
+
 col1, col2 = st.columns(2)
 
 ingredient_counts = {}
@@ -73,7 +93,7 @@ with col1:
     st.subheader("Number of Ingredients")
     ingredient_data = pd.DataFrame({
         "Ingredient": items,
-        "Count": [2] * len(items)
+        "Count": [0] * len(items)
     })
     edited_ingredient_data = st.data_editor(ingredient_data, num_rows="fixed", use_container_width=True, hide_index=True)
     for index, row in edited_ingredient_data.iterrows():
@@ -118,6 +138,11 @@ for item in items:
 
     prob += used <= ingredient_counts[item] + created
 
+if ensure_all_ingredients:
+    for ingredient, combos_producing in ingredient_output_map.items():
+        if combos_producing:
+            prob += lpSum([combo_vars[combo] for combo in combos_producing]) >= 1
+
 # Solve the problem
 prob.solve()
 
@@ -156,6 +181,20 @@ for combo, count, product in combos_used:
 # st.write(combos_used)
 from render_combo import render_results
 render_results(total_score, combos_used, total_loot, ingredient_images)
+
+if ensure_all_ingredients:
+    coverage_rows = []
+    for ingredient, combos_producing in ingredient_output_map.items():
+        produced = sum(value(combo_vars[combo]) for combo in combos_producing) if combos_producing else 0
+        coverage_rows.append({
+            "Ingredient": ingredient,
+            "Goal": 1 if combos_producing else 0,
+            "Produced": int(produced) if produced is not None else 0,
+            "Goal Met": bool(produced >= 1) if combos_producing else False
+        })
+    coverage_df = pd.DataFrame(coverage_rows)
+    st.subheader("Ingredient Goal Coverage")
+    st.dataframe(coverage_df, use_container_width=True)
 
 st.subheader("Check brews:")
 st.write("Changes in the quantities are highlighted in yellow")
